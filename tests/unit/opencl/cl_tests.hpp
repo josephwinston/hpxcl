@@ -22,7 +22,7 @@ static void cl_test(hpx::opencl::device);
 {                                                                              \
     boost::shared_ptr<std::vector<char>> out1 =                                \
                        buffer.enqueue_read(0, DATASIZE).get().get_data().get();\
-    HPX_TEST_EQ(std::string((const char*)(value)), std::string(&(*out1)[0]));  \
+    HPX_TEST_EQ(std::string((const char*)(value)), std::string(out1->data()));  \
 }                                                           
 
 
@@ -46,7 +46,7 @@ static hpx::opencl::device init(variables_map & vm)
     // Query devices
     std::vector<hpx::opencl::device> devices
             = hpx::opencl::get_devices(hpx::find_here(),
-                                        CL_DEVICE_TYPE_ALL, 1.1f).get();
+                                        CL_DEVICE_TYPE_ALL, "OpenCL 1.1").get();
     HPX_TEST(devices.size() >= device_id);
 
     // Choose device

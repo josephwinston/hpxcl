@@ -3,8 +3,8 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef BENCHMARK_HPXCL_SINGLE_HPP__
-#define BENCHMARK_HPXCL_SINGLE_HPP__
+#ifndef BENCHMARK_HPXCL_SINGLE_HPP_
+#define BENCHMARK_HPXCL_SINGLE_HPP_
 
 #include "../../../opencl.hpp"
 #include "timer.hpp"
@@ -36,7 +36,7 @@ static void hpxcl_single_initialize( hpx::naming::id_type node_id,
     // Query all devices on local node
     std::vector<device> devices = get_devices( node_id, 
                                                CL_DEVICE_TYPE_GPU,
-                                               1.1f ).get();
+                                               "OpenCL 1.1" ).get();
 
 /*
     // print devices
@@ -193,11 +193,11 @@ hpxcl_single_calculate(std::vector<float> &a,
 
     // copy data to gpu
     shared_future<event> write_a_event = 
-               hpxcl_single_buffer_a.enqueue_write(0, size*sizeof(float), &a[0]);
+           hpxcl_single_buffer_a.enqueue_write(0, size*sizeof(float), a.data());
     shared_future<event> write_b_event =
-               hpxcl_single_buffer_b.enqueue_write(0, size*sizeof(float), &b[0]);
+           hpxcl_single_buffer_b.enqueue_write(0, size*sizeof(float), b.data());
     shared_future<event> write_c_event =
-               hpxcl_single_buffer_c.enqueue_write(0, size*sizeof(float), &c[0]);
+           hpxcl_single_buffer_c.enqueue_write(0, size*sizeof(float), c.data());
 
     // wait for write to finish
     write_a_event.get().await();
@@ -320,5 +320,5 @@ static void hpxcl_single_shutdown()
 
 
 
-#endif //BENCHMARK_HPXCL_SINGLE_HPP__
+#endif //BENCHMARK_HPXCL_SINGLE_HPP_
 

@@ -4,15 +4,17 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef HPX_OPENCL_SERVER_KERNEL_HPP__
-#define HPX_OPENCL_SERVER_KERNEL_HPP__
+#ifndef HPX_OPENCL_SERVER_KERNEL_HPP_
+#define HPX_OPENCL_SERVER_KERNEL_HPP_
 
-#include <hpx/hpx_main.hpp>
+#include <hpx/hpx.hpp>
+#include <hpx/config.hpp>
 #include <hpx/include/components.hpp>
 
 #include <CL/cl.h>
 
 #include "../fwd_declarations.hpp"
+#include "../event.hpp"
 
 ////////////////////////////////////////////////////////////////
 namespace hpx { namespace opencl{ namespace server{

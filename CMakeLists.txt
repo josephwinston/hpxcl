@@ -5,45 +5,26 @@ cmake_minimum_required(VERSION 2.8.4 FATAL_ERROR)
 #This project is C++ based.
 project(hpxcl CXX)
 
-# This adds the HPX cmake configuration directory to the search path.
-
-message(STATUS
-${HPX_ROOT}/share/cmake-${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}/Modules)
-set(CMAKE_MODULE_PATH
-${HPX_ROOT}/share/cmake-${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}/Modules)
-
-# add our cmake path
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-
-
-###########################
-# Include boost
-#
-find_package(HPX_Boost)
-
-hpx_include_sys_directories("${BOOST_INCLUDE_DIR}")
-hpx_link_sys_directories("${BOOST_LIBRARY_DIR}")
-
-if(NOT MSVC)
-  set(hpx_LIBRARIES ${BOOST_FOUND_LIBRARIES})
+# Find and include HPX settings
+if(NOT HPX_ROOT)
+  message("HPX_ROOT not set, checking environment variables...")
+  set(HPX_ROOT $ENV{HPX_ROOT})
+  if(NOT DEFINED HPX_ROOT)
+    message(FATAL_ERROR "HPX_ROOT not set, unable to find HPX!")
+  endif()
 endif()
 
-# Boost preprocessor definitions
-#hpx_add_config_define(BOOST_PARAMETER_MAX_ARITY 7)
-#hpx_add_config_define(HPX_COROUTINE_ARG_MAX 1)
-#if(NOT MSVC)
-#  hpx_add_config_define(HPX_COROUTINE_NO_SEPARATE_CALL_SITES)
-#endif()
-#hpx_add_config_define(HPX_LOG_NO_TSS)
-#hpx_add_config_define(HPX_LOG_NO_TS)
-#hpx_add_config_define(BOOST_BIGINT_HAS_NATIVE_INT64)
+# This adds the HPX cmake configuration directory to the search path.
+set(CMAKE_MODULE_PATH
+${HPX_ROOT}/share/cmake-${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}/Modules
+	${CMAKE_MODULE_PATH})
+
+# add our cmake path
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/" ${CMAKE_MODULE_PATH} )
+
+###########################
+# Include hpx
 #
-# Disable usage of std::atomics in lockfree
-#if(${BOOST_MINOR_VERSION} LESS 53)
-#  hpx_add_config_define(BOOST_NO_0X_HDR_ATOMIC)
-#endif()
-
-
 
 #Instruct cmake to find the HPX settings
 find_package(HPX REQUIRED)
@@ -51,13 +32,53 @@ set(HPX_RPATH "${CMAKE_BINARY_DIR}/lib/hpx:${HPX_RPATH}:${CMAKE_INSTALL_PREFIX}/
 include_directories(${HPX_INCLUDE_DIR})
 link_directories(${HPX_LIBRARY_DIR})
 
-find_package(HPX_OpenCL REQUIRED)
-include_directories(${OpenCL_INCLUDE_DIR})
-link_directories(${OpenCL_LIBRARY_DIR})
 
-add_subdirectory(opencl)
-
+########################################################################
+# configurations
+# 
 hpx_option(HPX_BUILD_EXAMPLES BOOL "Build HPX examples (default: ON)" ON ADVANCED)
+hpx_option(HPX_BUILD_TESTS BOOL "Build HPX tests (default: ON)" ON ADVANCED)
+hpx_option(HPX_BUILD_DOCUMENTATION BOOL "The HPX documentation toolchain is available (default OFF)." OFF)
+hpx_option(HPXCL_WITH_OPENCL BOOL "Builds the CUDA part of HPXCL (default ON)." ON)
+hpx_option(HPXCL_WITH_CUDA BOOL "Builds the CUDA part of HPXCL (default OFF)." OFF)
+
+
+########################################################################
+# further includes, depending on config
+# 
+if(HPXCL_WITH_OPENCL)
+    find_package(OpenCL REQUIRED)
+    include_directories(${OPENCL_INCLUDE_DIRS})
+	#get_filename_component(PARENT_DIR ${OPENCL_LIBRARIES} OPENCL_LIBRARY_DIR)
+    #link_directories(${OPENCL_LIBRARY_DIR})
+endif()
+
+if(HPXCL_WITH_CUDA)
+    find_package(CUDA REQUIRED)
+endif()
+
+if(HPX_BUILD_EXAMPLES)
+    find_package(PNG)
+    if(PNG_FOUND)
+        include_directories(${PNG_INCLUDE_DIRS})
+    endif()
+endif()
+
+
+#########################
+# Builds
+# 
+
+# build opencl
+if(HPXCL_WITH_OPENCL)
+    add_subdirectory(opencl)
+endif()
+
+# build cuda
+if(HPXCL_WITH_CUDA)
+    add_subdirectory(cuda)
+endif()
+
 
 if(HPX_BUILD_EXAMPLES)
     add_hpx_pseudo_target(examples)
@@ -65,7 +86,6 @@ if(HPX_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-hpx_option(HPX_BUILD_DOCUMENTATION BOOL "The HPX documentation toolchain is available (default OFF)." OFF)
 if(HPX_BUILD_DOCUMENTATION)
   hpx_option(HPX_BUILD_DOCUMENTATION_SINGLEPAGE BOOL "The HPX documentation should be build as a single page HTML (default OFF)." OFF)
   add_subdirectory(docs)
@@ -73,7 +93,6 @@ endif()
 
 
 ###############################################################################
-hpx_option(HPX_BUILD_TESTS BOOL "Build HPX tests (default: ON)" ON ADVANCED)
 
 if(HPX_BUILD_TESTS)
   hpx_option(HPX_BUILD_TESTS_BENCHMARKS BOOL "Build HPX benchmark tests (default: ON)" ON ADVANCED)

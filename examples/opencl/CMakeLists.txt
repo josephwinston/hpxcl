@@ -17,6 +17,7 @@ set(example_programs
     hello_world
     _tmp_test
     events_and_futures
+    list_devices
 )
 
 foreach(example_program ${example_programs})
@@ -29,7 +30,7 @@ foreach(example_program ${example_programs})
   add_hpx_executable(${example_program}
                      SOURCES ${sources}
                      DEPENDENCIES opencl_component
-                     COMPONENT_DEPENDENCIES iostreams
+                     COMPONENT_DEPENDENCIES iostreams opencl
                      FOLDER "Examples/OpenCL/${example_program}")
 
   # add a custom target for this example
@@ -42,5 +43,7 @@ foreach(example_program ${example_programs})
   # add dependencies to pseudo-target
   add_hpx_pseudo_dependencies(examples.opencl.${example_program}
                               ${example_program}_exe)
+
+  target_link_libraries(${example_program}_exe opencl_component)
 endforeach()
 

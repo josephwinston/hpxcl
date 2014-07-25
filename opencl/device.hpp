@@ -4,11 +4,15 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef HPX_OPENCL_DEVICE_HPP__
-#define HPX_OPENCL_DEVICE_HPP__
+#ifndef HPX_OPENCL_DEVICE_HPP_
+#define HPX_OPENCL_DEVICE_HPP_
+
+#include "export_definitions.hpp"
 
 #include "server/device.hpp"
 
+#include <hpx/hpx.hpp>
+#include <hpx/config.hpp>
 #include <hpx/include/components.hpp>
 #include <hpx/lcos/future.hpp>
 
@@ -22,7 +26,7 @@ namespace opencl {
     /////////////////////////////////////////
     /// @brief An accelerator device.
     ///
-    class device
+    class HPX_OPENCL_EXPORT device
       : public hpx::components::client_base<
           device, hpx::components::stub_base<server::device>
         >
@@ -66,12 +70,31 @@ namespace opencl {
              *          This will typically be cast to some other type via
              *          (for example):
              *          \code{.cpp}
-             *          cl_uint *return_uint = (cl_uint*)&return_charvector[0];
+             *          cl_uint *return_uint = (cl_uint*)return_charvector->data();
              *          \endcode
              *          or converted to a string via \ref device_info_to_string.
              */
             hpx::lcos::future<std::vector<char>>
             get_device_info(cl_device_info info_type) const;
+            
+             /**
+             *  @brief Queries platform infos.
+             *  
+             *  @param info_type    The type of information.<BR>
+             *                      A complete list can be found on the official
+             *                      <A HREF="http://www.khronos.org/registry/cl/
+             * sdk/1.2/docs/man/xhtml/clGetPlatformInfo.html">
+             *                      OpenCL Reference</A>.
+             *  @return The info data as char array.<BR>
+             *          This will typically be cast to some other type via
+             *          (for example):
+             *          \code{.cpp}
+             *          cl_uint *return_uint = (cl_uint*)return_charvector->data();
+             *          \endcode
+             *          or converted to a string via \ref device_info_to_string.
+             */
+            hpx::lcos::future<std::vector<char>>
+            get_platform_info(cl_platform_info info_type) const;
             
             /** 
              *  @brief Converts device info data to a string
@@ -101,7 +124,10 @@ namespace opencl {
              */
             template<class T>
             hpx::lcos::shared_future<hpx::opencl::event>
-            create_future_event(hpx::lcos::shared_future<T> future); 
+            create_future_event(hpx::lcos::shared_future<T> & future); 
+            template<class T>
+            hpx::lcos::shared_future<hpx::opencl::event>
+            create_future_event(hpx::lcos::future<T> && future); 
 
             /**
              *  @brief Creates an OpenCL buffer.
@@ -202,7 +228,26 @@ namespace opencl {
 
     template<class T>
     hpx::lcos::shared_future<hpx::opencl::event>
-    device::create_future_event(hpx::lcos::shared_future<T> future)
+    device::create_future_event(hpx::lcos::shared_future<T> & future)
+    {
+    
+        // Create a user event
+        hpx::lcos::shared_future<hpx::opencl::event> event = create_user_event();
+    
+        // Schedule the user event trigger to be called after future
+        future.then(
+                       hpx::util::bind(&(device::trigger_user_event_externally),
+                                       event)
+                   );
+
+        // Return the event
+        return event;
+
+    }
+
+    template<class T>
+    hpx::lcos::shared_future<hpx::opencl::event>
+    device::create_future_event(hpx::lcos::future<T> && future)
     {
     
         // Create a user event
@@ -222,4 +267,4 @@ namespace opencl {
 }}
 
 
-#endif// HPX_OPENCL_DEVICE_HPP__
+#endif// HPX_OPENCL_DEVICE_HPP_

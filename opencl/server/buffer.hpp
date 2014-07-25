@@ -8,7 +8,8 @@
 #define HPX_OPENCL_SERVER_BUFFER_HPP
 
 
-#include <hpx/hpx_main.hpp>
+#include <hpx/hpx.hpp>
+#include <hpx/config.hpp>
 #include <hpx/include/components.hpp>
 #include <hpx/util/serialize_buffer.hpp>
 
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "../fwd_declarations.hpp"
+#include "../event.hpp"
 
 namespace hpx { namespace opencl{ namespace server{
 

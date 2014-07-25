@@ -4,13 +4,14 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef HPX_OPENCL_SERVER_STD_HPP__
-#define HPX_OPENCL_SERVER_STD_HPP__
+#ifndef HPX_OPENCL_SERVER_STD_HPP_
+#define HPX_OPENCL_SERVER_STD_HPP_
 
 #include <CL/cl.h>
 
 #include <vector>
-#include <hpx/hpx_main.hpp>
+#include <hpx/config.hpp>
+#include <hpx/hpx.hpp>
 #include <hpx/include/actions.hpp>
 
 #include <boost/serialization/vector.hpp>
@@ -27,7 +28,7 @@ namespace hpx { namespace opencl{ namespace server{
 
     // Returns the IDs of all devices on current host
     std::vector<hpx::opencl::device>
-    get_devices(cl_device_type, float cl_version);
+    get_devices(cl_device_type, std::string cl_version);
 
     //[opencl_management_action_types
     HPX_DEFINE_PLAIN_ACTION(get_devices, get_devices_action);

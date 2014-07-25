@@ -67,30 +67,45 @@ HPX_REGISTER_PLAIN_ACTION(hpx::opencl::server::get_devices_action,
 ///////////////////////////////////////////////////
 /// Local functions
 ///
-static float cl_version_to_float(std::vector<char> version_str_)
+static std::vector<int> 
+parse_version_string(std::string version_str)
 {
-
 
     try{
        
-        // Make String out of char array
-        std::string version_str (&version_str_[0]);
-    
+        // Make sure the version string starts with "OpenCL "
+        BOOST_ASSERT(version_str.compare(0, 7, "OpenCL ") == 0);
+
         // Cut away the "OpenCL " in front of the version string
         version_str = version_str.substr(7);
     
         // Cut away everything behind the version number
         version_str = version_str.substr(0, version_str.find(" "));
         
+        // Get major version string
+        std::string version_str_major = 
+                           version_str.substr(0, version_str.find("."));
+
+        // Get minor version string
+        std::string version_str_minor = 
+                           version_str.substr(version_str_major.size() + 1);
+
+        // create output vector
+        std::vector<int> version_numbers(2);
+
         // Parse version number
-        float version_number = (float) ::atof(version_str.c_str());
+        version_numbers[0] = ::atoi(version_str_major.c_str());
+        version_numbers[1] = ::atoi(version_str_minor.c_str());
 
         // Return the parsed version number
-        return version_number;
+        return version_numbers;
 
-    } catch (const std::exception & ex) {
+    } catch (const std::exception &) {
         hpx::cerr << "Error while parsing OpenCL Version!" << hpx::endl;
-        return -1.0f;
+        std::vector<int> version_numbers(2);
+        version_numbers[0] = -1;
+        version_numbers[1] = 0;
+        return version_numbers;
     }
 
 }
@@ -136,7 +151,7 @@ ensure_device_components_initialization()
 
     // Retrieve platforms
     std::vector<cl_platform_id> platforms(num_platforms);
-    err = clGetPlatformIDs(num_platforms, &platforms[0], NULL);
+    err = clGetPlatformIDs(num_platforms, platforms.data(), NULL);
     cl_ensure(err, "clGetPlatformIDs()");
 
     // Search on every platform
@@ -154,13 +169,41 @@ ensure_device_components_initialization()
         std::vector<cl_device_id> devices_on_platform(num_devices_on_platform);
         err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL,
                                   num_devices_on_platform,
-                                  &devices_on_platform[0], NULL);
+                                  devices_on_platform.data(), NULL);
         cl_ensure(err, "clGetDeviceIDs()");
+
 
         // Add devices_on_platform to devices
         BOOST_FOREACH( const std::vector<cl_device_id>::value_type& device,
                        devices_on_platform )
         {
+
+        #ifndef HPXCL_ALLOW_OPENCL_1_0_DEVICES
+
+            // Get OpenCL Version string length
+            size_t version_string_length;
+            err = clGetDeviceInfo(device, CL_DEVICE_VERSION, 0, NULL,
+                                                       &version_string_length);
+
+            // Get OpenCL Version string
+            std::vector<char> version_string_arr(version_string_length);
+            err = clGetDeviceInfo(device, CL_DEVICE_VERSION, 
+                                    version_string_length,
+                                    version_string_arr.data(),
+                                    NULL);
+
+            // Convert to std::string
+            std::string version_string(version_string_arr.begin(),
+                                       version_string_arr.end());
+
+            // Parse
+            std::vector<int> version = parse_version_string(version_string);
+
+            // only allow machines with version 1.1 or higher
+            if(version[0] < 1) continue;
+            if(version[0] == 1 && version[1] < 1) continue;
+
+        #endif //HPXCL_ALLOW_OPENCL_1_0_DEVICES
 
             // Create a new device client 
             hpx::opencl::device device_client(
@@ -180,8 +223,12 @@ ensure_device_components_initialization()
     
 
 std::vector<hpx::opencl::device>
-hpx::opencl::server::get_devices(cl_device_type type, float min_cl_version)
+hpx::opencl::server::get_devices(cl_device_type type,
+                                 std::string min_cl_version)
 {
+
+    // Parse required OpenCL version
+    std::vector<int> required_version = parse_version_string(min_cl_version);
 
     // Create the list of device clients
     ensure_device_components_initialization();
@@ -198,17 +245,30 @@ hpx::opencl::server::get_devices(cl_device_type type, float min_cl_version)
     BOOST_FOREACH( const std::vector<hpx::opencl::device>::value_type& device,
                    devices.get())
     {
-        // Check for required opencl version
-        std::vector<char> cl_version_string =
+        // Get device OpenCL version
+        std::vector<char> cl_version_string_vec =
                                 device.get_device_info(CL_DEVICE_VERSION).get();
-        float device_cl_version = cl_version_to_float(cl_version_string);
-        if(device_cl_version < min_cl_version) continue;
+
+        // Make String out of char array
+        std::string cl_version_string (cl_version_string_vec.begin(),
+                                       cl_version_string_vec.end());
+    
+        // Parse OpenCL version
+        std::vector<int> device_cl_version = 
+                                        parse_version_string(cl_version_string);
+
+        // Check if device supports required version
+        if(device_cl_version[0] < required_version[0]) continue;
+        if(device_cl_version[0] == required_version[0])
+        {
+            if(device_cl_version[1] < required_version[1]) continue;
+        }
 
         // Check for requested device type
         std::vector<char> device_type_string = 
                                    device.get_device_info(CL_DEVICE_TYPE).get();
         cl_device_type device_type = *((cl_device_type*)
-                                                     (&device_type_string[0]));
+                                                   (device_type_string.data()));
         if(!(device_type & type)) continue;
 
         // TODO filter devices

@@ -11,72 +11,210 @@
 
 #include "../../../opencl.hpp"
 
-#include "mandelbrotworker.hpp"
-#include "workload.hpp"
-#include "work_queue.hpp"
 #include "pngwriter.hpp"
 #include "timer.hpp"
+#include "image_generator.hpp"
 
 #include <string>
 #include <boost/shared_ptr.hpp>
+
+
+
+void grainsize_bench(std::vector<hpx::opencl::device> devices,
+                   size_t img_x, size_t img_y,
+                   size_t num_iterations, size_t num_kernels, bool verbose)
+{
+    
+            // default benchmark image
+            double posx = -0.743643887037151;
+            double posy = 0.131825904205330;
+            double zoom = 6.2426215349789484160e10;
+
+            hpx::cerr << "Starting in benchmark mode." << hpx::endl;
+
+            // create image generator without gpus
+            image_generator img_gen(1, 1, num_kernels, verbose, devices);
+
+            img_gen.wait_for_startup_finished();
+
+            // iterate through all configurations
+            for(size_t grainsize = 256; grainsize <= img_x*img_y; grainsize *= 2)
+            {
+                hpx::cerr << "Starting test with grainsize " << grainsize << " ..."
+                          << hpx::endl;
+               
+                // calculate tile size
+                size_t tilesize_x, tilesize_y;
+                if(grainsize < img_x)
+                {
+                    tilesize_y = 1;
+                    tilesize_x = grainsize;
+                }
+                else
+                {
+                    tilesize_x = img_x;
+                    tilesize_y = grainsize/img_x;
+                }
+               
+                hpx::cerr << "Using tilesizes: " << tilesize_x << "x"
+                          << tilesize_y << hpx::endl;
+
+                // initialize timer
+                double total_time = 0.0;
+
+                // main benchmark loop
+                for(size_t i = 0; i < num_iterations + 1; i++)
+                {
+                    if(i == 0)
+                    {
+                        hpx::cerr << "Warmup iteration ..." << hpx::endl;
+                    }
+                    if(i >= 1)
+                    {
+                        hpx::cerr << "Starting benchmark iteration " << i << "/"
+                                  << num_iterations << " ..." << hpx::endl;
+
+                        // start time measurement
+                        timer_start();
+                    }
+
+                    img_gen.compute_image(posx,
+                                          posy,
+                                          zoom,
+                                          0.0,
+                                          img_x,
+                                          img_y,
+                                          true,
+                                          tilesize_x,
+                                          tilesize_y).get();
+
+                    if(i >= 1)
+                    {
+
+                        // measure time
+                        total_time += timer_stop();
+
+                    }
+                }
+
+                // calculate average time
+                double time = total_time / (double)num_iterations;
+                
+                hpx::cerr << "Time: " << time << " ms" << hpx::endl;
+                hpx::cout << grainsize
+                          << "\t" << time 
+                          << hpx::endl;
+
+            }
+
+            hpx::cerr << "Done." << hpx::endl;
+            img_gen.shutdown();
+
+   
+    
+    
+}
+
+void speedup_bench(std::vector<hpx::opencl::device> devices,
+                   size_t tilesize_x, size_t tilesize_y, size_t img_x, size_t img_y,
+                   size_t num_iterations, size_t num_kernels, bool verbose)
+{
+    
+            // default benchmark image
+            double posx = -0.743643887037151;
+            double posy = 0.131825904205330;
+            double zoom = 6.2426215349789484160e10;
+
+            hpx::cerr << "Starting in benchmark mode." << hpx::endl;
+
+            // create image generator without gpus
+            image_generator img_gen(tilesize_x, tilesize_y, num_kernels, verbose);
+
+            // save the time for single-gpu
+            double single_gpu_time = 1.0f;
+
+            for(size_t num_gpus = 1; num_gpus <= devices.size(); num_gpus++)
+            {
+                hpx::cerr << "Starting test with " << num_gpus << " gpus ..."
+                          << hpx::endl;
+               
+                // Add another worker
+                if(verbose){
+                     hpx::cerr << "adding worker ..."
+                               << hpx::endl;
+                }
+                img_gen.add_worker(devices[devices.size() - num_gpus], 4); 
+
+                // Wait for the worker to initialize
+                if(verbose){
+                     hpx::cerr << "waiting for worker to finish startup ..."
+                               << hpx::endl;
+                }
+                img_gen.wait_for_startup_finished();
+
+                // main benchmark loop
+                for(size_t i = 0; i < num_iterations + 1; i++)
+                {
+                    // start timer after first iteration (warmup iteration)
+                    if(i == 1) timer_start();
+                    img_gen.compute_image(posx,
+                                          posy,
+                                          zoom,
+                                          0.0,
+                                          img_x,
+                                          img_y,
+                                          true,
+                                          tilesize_x,
+                                          tilesize_y).get();
+                }
+
+                // stop timer
+                double time = timer_stop();
+                time = time / (double)num_iterations - 1;
+                
+                // save time if we only have one gpu
+                if(num_gpus == 1)
+                    single_gpu_time = time;
+                
+                hpx::cerr << "Time: " << time << " ms" << hpx::endl;
+                hpx::cout << num_gpus 
+                          << "\t" << time 
+                          << "\t" << (single_gpu_time / time) 
+                          << "\t" << ((single_gpu_time / time) / (double)num_gpus)
+                          << hpx::endl;
+
+            }
+
+            hpx::cerr << "Done." << hpx::endl;
+            img_gen.shutdown();
+
+   
+    
+    
+}
+
 
 int hpx_main(boost::program_options::variables_map & vm)
 {
 
     std::size_t num_kernels = 0;
     bool verbose = false;
+    bool benchmark = false;
 
     // Print help message on wrong argument count
-    if (vm.count("num_parallel_kernels"))
-        num_kernels = vm["num_parallel_kernels"].as<std::size_t>();
+    if (vm.count("num-parallel-kernels"))
+        num_kernels = vm["num-parallel-kernels"].as<std::size_t>();
     if (vm.count("v"))
         verbose = true;
+    if (vm.count("bench"))
+        benchmark = true;
 
     // The main scope
     {
 
-        // get all HPX localities
-        if(verbose) hpx::cout << "Finding all hpx localities ..." << hpx::endl;
-        std::vector<hpx::naming::id_type> localities = 
-                                            hpx::find_all_localities();
-        if(verbose) hpx::cout << localities.size() << " hpx localities found!" << hpx::endl; 
-
-        // query all devices
-        if(verbose) hpx::cout << "Requesting device lists from localities ..." << hpx::endl;
-        std::vector<hpx::lcos::shared_future<std::vector<hpx::opencl::device>>>
-        locality_device_futures;
-        BOOST_FOREACH(hpx::naming::id_type & locality, localities)
-        {
-
-            // get all devices on locality
-            hpx::lcos::shared_future<std::vector<hpx::opencl::device>>
-            locality_device_future = hpx::opencl::get_devices(locality,
-                                                             CL_DEVICE_TYPE_GPU,
-                                                             1.0f);
-
-            // add locality device future to list of futures
-            locality_device_futures.push_back(locality_device_future);
-
-        }
-        
-        // wait for all localities to respond, then add all devices to devicelist
-        if(verbose) hpx::cout << "Waiting for device lists ..." << hpx::endl;
-        std::vector<hpx::opencl::device> devices;
-        BOOST_FOREACH(
-                    hpx::lcos::shared_future<std::vector<hpx::opencl::device>>
-                    locality_device_future,
-                    locality_device_futures)
-        {
-
-            // wait for device query to finish
-            std::vector<hpx::opencl::device> locality_devices = 
-                                                   locality_device_future.get();
-
-            // add all devices to device list
-            devices.insert(devices.end(), locality_devices.begin(),
-                                          locality_devices.end());
-
-        }
+        // get all devices
+        std::vector<hpx::opencl::device> devices = 
+           hpx::opencl::get_all_devices(CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_ACCELERATOR, "OpenCL 1.1").get();
 
         // Check whether there are any devices
         if(devices.size() < 1)
@@ -86,110 +224,73 @@ int hpx_main(boost::program_options::variables_map & vm)
         }
         else
         {
-            hpx::cout << devices.size() << " OpenCL devices found!" << hpx::endl;
+            hpx::cerr << devices.size() << " OpenCL devices found!" << hpx::endl;
         }
 
-        // create workqueue
-        boost::shared_ptr<work_queue<boost::shared_ptr<workload>>>
-                       workqueue(new work_queue<boost::shared_ptr<workload>>()); 
 
-        // create workers
-        //hpx::cout << "starting workers ..." << hpx::endl;
-        std::vector<boost::shared_ptr<mandelbrotworker>> workers;
-        BOOST_FOREACH(hpx::opencl::device & device, devices)
+        //double posx = -0.7;
+        //double posy = 0.0;
+        //double zoom = 1.04;
+        ////double zoom = 0.05658352842407526628;
+
+        double posx = -0.743643887037151;
+        double posy = 0.131825904205330;
+        double zoom = 6.2426215349789484160e10;
+        //double zoom = 35.8603219463046942295;
+
+        size_t img_x = 3840;
+        size_t img_y = 2160;
+
+        if(!benchmark)
         {
+            // create image_generator
+            image_generator img_gen(img_x, 8, num_kernels, verbose, devices);
             
-            // create worker
-            boost::shared_ptr<mandelbrotworker> worker(
-                                new mandelbrotworker(device,
-                                                     workqueue,
-                                                     num_kernels));
-            // add worker to workerlist
-            workers.push_back(worker);
-
-        }
+            // wait for workers to finish initialization
+            if(verbose) hpx::cout << "waiting for workers to finish startup ..." << hpx::endl;
+            img_gen.wait_for_startup_finished();
+    
+            // start timer
+            timer_start();
+    
+            // queue image
+            boost::shared_ptr<std::vector<char>> img_data =
+                img_gen.compute_image(posx,
+                                      posy,
+                                      zoom,
+                                      0.0,
+                                      img_x,
+                                      img_y,
+                                      false,
+                                      img_x,
+                                      4).get();
+            
+            // stop timer
+            double time = timer_stop();
+    
+            hpx::cout << "time: " << time << " ms" << hpx::endl;
+    
+            // end the image generator
+            img_gen.shutdown();
+    
+            // save the png
+            save_png(img_data, img_x, img_y, "test.png");
         
-        /*
-        double left = -0.743643887062801003142;
-        double right = -0.743643887011500996858;
-        double top = 0.131825904224567502357;
-        double bottom = 0.131825904186092497643;
-        */
-        
-
-
-        ///*
-        double left = -2.238461538;
-        double right = 0.8384615385;
-        double top = 1.153846154;
-        double bottom = -1.153846154;
-        //*/
-        size_t img_x = 2560;
-        size_t img_y = 1920;
-
-        // create an image
-        if(verbose) hpx::cout << "creating img ..." << hpx::endl;
-        unsigned long img = png_create(img_x,img_y);
-
-        // wait for workers to finish initialization
-        if(verbose) hpx::cout << "waiting for workers to finish startup ..." << hpx::endl;
-        BOOST_FOREACH(boost::shared_ptr<mandelbrotworker> worker, workers)
-        {
-
-            worker->wait_for_startup_finished();
-
+        } else {
+            
+            /*speedup_bench(devices,
+                          3840, 8,
+                          3840, 2160,
+                          10,
+                          4,
+                          verbose);
+*/
+            grainsize_bench(devices,
+                            2048, 1024,
+                            10,
+                            4,
+                            verbose);
         }
-
-        if(verbose) hpx::cout << "adding workpackets to workqueue ..." << hpx::endl;
-        timer_start();
-        // add workloads for all lines
-        for(size_t i = 0; i < img_y; i++)
-        {
-            // hpx::cout << "adding line " << i << " ..." << hpx::endl;
-            boost::shared_ptr<workload> row(
-                   new workload(img_x, left, top - (top - bottom)*i/(img_y - 1), right-left, 0.0, 0, i));
-            workqueue->add_work(row);
-
-        }
-        
-        // finish workqueue
-        if(verbose) hpx::cout << "finishing workqueue ..." << hpx::endl;
-        workqueue->finish();
-
-        // enter calculated rows to image
-        if(verbose) hpx::cout << "waiting for lines ..." << hpx::endl;
-        boost::shared_ptr<workload> done_row;
-        int i = 0;
-        while(workqueue->retrieve_finished_work(&done_row))
-        {
-
-            // hpx::cout << "taking line " << done_row->pos_in_img << " ... " << hpx::endl;
-            png_set_row(img, done_row->pos_in_img, done_row->pixeldata.data());
-           
-            if(verbose)
-            { 
-                int progress = ++i;
-                if(progress % 10 == 0)
-                    hpx::cout << "progress: " << progress << " / " << img_y << hpx::endl;
-            }
-        }
-
-        // wait for worker to finish
-        if(verbose) hpx::cout << "waiting for workers to finish ..." << hpx::endl;
-        BOOST_FOREACH(boost::shared_ptr<mandelbrotworker> worker, workers)
-        {
-
-            worker->join();
-
-        }
-       
-        double time = timer_stop();
-
-        hpx::cout << "time: " << time << " ms" << hpx::endl;
-
-        // save the png
-        if(verbose) hpx::cout << "saving png ..." << hpx::endl;
-        png_save_and_close(img, "test.png");
 
     }
 
@@ -209,13 +310,17 @@ int main(int argc, char* argv[])
     boost::program_options::options_description cmdline(
                                 "Usage: " HPX_APPLICATION_STRING " [options]");
     cmdline.add_options()
-        ( "num_parallel_kernels"
-        , boost::program_options::value<std::size_t>()->default_value(10)
-        , "the number of parallel kernel invocations") ;
+        ( "num-parallel-kernels"
+        , boost::program_options::value<std::size_t>()->default_value(4)
+        , "the number of parallel kernel invocations per gpu") ;
 
     cmdline.add_options()
         ( "v"
         , "verbose output") ;
+
+    cmdline.add_options()
+        ( "bench"
+        , "runs benchmark") ;
 
     return hpx::init(cmdline, argc, argv);
 }

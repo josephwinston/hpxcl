@@ -32,12 +32,12 @@ int hpx_main(int argc, char* argv[])
 	std::vector<device> devices
             = get_devices(hpx::find_here(),
              //           CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_ACCELERATOR);
-                        CL_DEVICE_TYPE_ALL, 1.1f).get();
+                        CL_DEVICE_TYPE_ALL, "OpenCL 1.1").get();
 
     if(devices.size() < 1)
     {
         devices = hpx::opencl::get_devices(hpx::find_here(),
-                        CL_DEVICE_TYPE_CPU, 1.1f).get();
+                        CL_DEVICE_TYPE_CPU, "OpenCL 1.1").get();
     }
 
 
@@ -53,7 +53,7 @@ int hpx_main(int argc, char* argv[])
         name = hpx::opencl::device::device_info_to_string(
                     devices[i].get_device_info(CL_DEVICE_VERSION)
                                      );
-        hpx::cout << &name[0] << hpx::endl;
+        hpx::cout << name.data() << hpx::endl;
     }
    
     size_t gpuid;
@@ -64,7 +64,7 @@ int hpx_main(int argc, char* argv[])
 
         #define datasize 10000
         std::vector<char> databuf(datasize);
-        char *datain = &databuf[0];
+        char *datain = databuf.data();
         for(int i = 0; i < datasize; i++)
         {
             datain[i] = i;

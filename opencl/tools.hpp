@@ -4,11 +4,14 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef HPX_OPENCL_TOOLS_HPP__
-#define HPX_OPENCL_TOOLS_HPP__
+#ifndef HPX_OPENCL_TOOLS_HPP_
+#define HPX_OPENCL_TOOLS_HPP_
 
 #include <CL/cl.h>
 #include <sstream>
+
+#include <hpx/hpx.hpp>
+#include <hpx/config.hpp>
 #include <hpx/include/iostreams.hpp>
 
 #ifndef CL_VERSION_1_1
@@ -59,5 +62,5 @@ namespace hpx { namespace opencl {
 
 }}
 
-#endif//HPX_OPENCL_TOOLS_HPP__
+#endif//HPX_OPENCL_TOOLS_HPP_
 

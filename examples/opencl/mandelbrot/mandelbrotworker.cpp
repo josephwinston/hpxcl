@@ -5,42 +5,57 @@
 
 #include "mandelbrotworker.hpp"
 #include "mandelbrotkernel.hpp"
+#include "mandelbrotworker_buffermanager.hpp"
 
 #include <cmath>
-#include <atomic>
+#include <boost/atomic.hpp>
 
 #define MAX_IMG_WIDTH 30000
 
-static std::atomic_uint id_counter(0);
+static boost::atomic<unsigned int> id_counter((unsigned int)0);
 
-mandelbrotworker::mandelbrotworker(hpx::opencl::device device,
-                                   boost::shared_ptr<work_queue<
-                                       boost::shared_ptr<workload>>> workqueue,
-                                   size_t num_workers)
-    : worker_initialized(boost::shared_ptr<hpx::lcos::local::event>(
-                                                new hpx::lcos::local::event()))
+mandelbrotworker::mandelbrotworker(
+                         hpx::opencl::device device_,
+                         size_t num_workers, 
+                         boost::function<bool(boost::shared_ptr<workload>*)>
+                         request_new_work_,
+                         boost::function<void(boost::shared_ptr<workload> &)>
+                         deliver_done_work_,
+                         bool verbose_,
+                         size_t workpacket_size_hint_x,
+                         size_t workpacket_size_hint_y)
+    : verbose(verbose_),
+      id(id_counter++),
+      device(device_),
+      worker_initialized(boost::make_shared<hpx::lcos::local::event>()),
+      request_new_work(request_new_work_),
+      deliver_done_work(deliver_done_work_)
 {
 
-    // get a unique id
-    unsigned int id = id_counter++;
-
     // start worker
-    worker_finished = hpx::async(&worker_starter,
-                                 workqueue,
-                                 device,
+    worker_finished = hpx::async(&mandelbrotworker::worker_starter,
+                                 this,
                                  num_workers,
-                                 worker_initialized,
-                                 id); 
+                                 workpacket_size_hint_x,
+                                 workpacket_size_hint_y); 
 
 }
 
+mandelbrotworker::~mandelbrotworker()
+{
+
+    // wait for the worker to finish
+    join();
+
+}
 
 void
 mandelbrotworker::join()
 {
 
     // wait for worker to finish
-    worker_finished.get();
+    hpx::shared_future<void> tmp = worker_finished;
+    tmp.wait();
     
 }
 
@@ -53,29 +68,65 @@ mandelbrotworker::wait_for_startup_finished()
 
 }
 
+#define KERNEL_INPUT_ARGUMENT_COUNT 6
 size_t
 mandelbrotworker::worker_main(
-           boost::shared_ptr<work_queue<boost::shared_ptr<workload>>> workqueue,
-           hpx::opencl::device device,
-           hpx::opencl::kernel kernel,
-           unsigned int id)
+                    hpx::opencl::kernel precalc_kernel,
+                    hpx::opencl::kernel kernel,
+                    size_t workpacket_size_hint_x,
+                    size_t workpacket_size_hint_y
+           )
 {
 
-        // counts how much wor has been done
+        // setup device memory management.
+        // initialize default buffer with size of numpixels * 3 (rgb) * sizeof(double)
+        mandelbrotworker_buffermanager buffermanager(
+                                        device,
+                                        workpacket_size_hint_x 
+                                        * workpacket_size_hint_y 
+                                        * 3 * sizeof(char),
+                                        verbose,
+                                        CL_MEM_WRITE_ONLY); 
+
+        // initialize buffermanager for precalc buffer
+        mandelbrotworker_buffermanager precalc_buffermanager(
+                                        device,
+                                        (workpacket_size_hint_x + 2)
+                                        * (workpacket_size_hint_y + 2)
+                                        * sizeof(char),
+                                        verbose,
+                                        CL_MEM_READ_WRITE); 
+
+        // counts how much work has been done
         size_t num_work = 0;
 
-        // create output buffer
-        hpx::opencl::buffer output_buffer =
-                       device.create_buffer(CL_MEM_WRITE_ONLY,
-                                            3 * MAX_IMG_WIDTH * sizeof(double));
+        // attach output buffer
+        size_t current_buffer_size = workpacket_size_hint_x
+                                     * workpacket_size_hint_y
+                                     * 3 * sizeof(char);
+        hpx::opencl::buffer output_buffer = buffermanager.get_buffer( 
+                                                    current_buffer_size );
+
+        // attach precalc buffer
+        size_t current_precalc_size = (workpacket_size_hint_x + 2)
+                                      * (workpacket_size_hint_y + 2)
+                                      * sizeof(char);
+        hpx::opencl::buffer precalc_buffer = precalc_buffermanager.get_buffer(
+                                                    current_precalc_size );
+
         // create input buffer
         hpx::opencl::buffer input_buffer = device.create_buffer(
-                                                  CL_MEM_READ_ONLY,
-                                                  4 * sizeof(double));
+                                                     CL_MEM_READ_ONLY,
+                                                     KERNEL_INPUT_ARGUMENT_COUNT * sizeof(double));
     
         // connect buffers to kernel 
-        kernel.set_arg(0, output_buffer);
-        kernel.set_arg(1, input_buffer);
+        kernel.set_arg(0, precalc_buffer);
+        kernel.set_arg(1, output_buffer);
+        kernel.set_arg(2, input_buffer);
+    
+        // connect buffers to precalc kernel 
+        precalc_kernel.set_arg(0, precalc_buffer);
+        precalc_kernel.set_arg(1, input_buffer);
     
     
         // main loop
@@ -83,53 +134,92 @@ mandelbrotworker::worker_main(
         hpx::opencl::work_size<2> dim;
         dim[0].offset = 0;
         dim[1].offset = 0;
-        dim[1].size = 8;
         dim[0].local_size = 8;
         dim[1].local_size = 8;
 
-        while(workqueue->request(&next_workload))
+        hpx::opencl::work_size<2> precalc_dim;
+        precalc_dim[0].offset = 0;
+        precalc_dim[1].offset = 0;
+
+        while(request_new_work(&next_workload))
         {
             
-            // check for maximum workload size
-            if(next_workload->num_pixels > MAX_IMG_WIDTH)
-            {
-                HPX_THROW_EXCEPTION(hpx::bad_parameter,
-                          "mandelbrotworker::worker_main()",
-                          "ERROR: workload size is larger than MAX_IMG_WIDTH!");
-            }
+            // calculate output buffer size
+            size_t needed_buffer_size = next_workload->num_pixels_x
+                                        * next_workload->num_pixels_y
+                                        * 3
+                                        * sizeof(char);
 
+            // change output buffer if needed buffersize changed
+            if (current_buffer_size != needed_buffer_size)
+            {
+                // query new buffer
+                output_buffer = buffermanager.get_buffer( needed_buffer_size );
+
+                // attach new buffer
+                kernel.set_arg(1, output_buffer);
+
+                // update current buffer size
+                current_buffer_size = needed_buffer_size;
+            }
+                                        
+            // calculate precalc buffer size
+            size_t needed_precalc_size = (next_workload->num_pixels_x + 2)
+                                        * (next_workload->num_pixels_y + 2)
+                                        * sizeof(char);
+
+            // change precalc buffer if needed precalcsize changed
+            if (current_precalc_size != needed_precalc_size)
+            {
+                // query new buffer
+                precalc_buffer = precalc_buffermanager.get_buffer(
+                                                         needed_precalc_size );
+
+                // attach new buffer
+                kernel.set_arg(0, precalc_buffer);
+                precalc_kernel.set_arg(0, precalc_buffer);
+
+                // update current buffer size
+                current_precalc_size = needed_precalc_size;
+            }
+ 
             // read calculation dimensions
-            double args[4];
-            args[0] = next_workload->origin_x;
-            args[1] = next_workload->origin_y;
-            args[2] = next_workload->size_x;
-            args[3] = next_workload->size_y;
+            double args[KERNEL_INPUT_ARGUMENT_COUNT];
+            args[0] = next_workload->topleft_x;
+            args[1] = next_workload->topleft_y;
+            args[2] = next_workload->hor_pixdist_x;
+            args[3] = next_workload->hor_pixdist_y;
+            args[4] = next_workload->vert_pixdist_x;
+            args[5] = next_workload->vert_pixdist_y;
     
             // send calculation dimensions to gpu
             hpx::lcos::shared_future<hpx::opencl::event> ev1 = 
-                          input_buffer.enqueue_write(0, 4*sizeof(double), args);
+                          input_buffer.enqueue_write(0, KERNEL_INPUT_ARGUMENT_COUNT*sizeof(double), args);
             
-            // run calculation
-            dim[0].size = next_workload->num_pixels * 8;
+            // run precalculation
+            precalc_dim[0].size = next_workload->num_pixels_x + 2;
+            precalc_dim[1].size = next_workload->num_pixels_y + 2;
             hpx::lcos::shared_future<hpx::opencl::event> ev2 = 
-                                                       kernel.enqueue(dim, ev1);
+                                      precalc_kernel.enqueue(precalc_dim, ev1);
+
+             // run calculation
+            dim[0].size = next_workload->num_pixels_x * 8;
+            dim[1].size = next_workload->num_pixels_y * 8;
+            hpx::lcos::shared_future<hpx::opencl::event> ev3 = 
+                                                       kernel.enqueue(dim, ev2);
     
             // query calculation result 
-            hpx::opencl::event ev3 =
-                output_buffer.enqueue_read(
-                          0, 3*sizeof(unsigned char)*next_workload->num_pixels, ev2).get();
+            hpx::opencl::event ev4 =
+                    output_buffer.enqueue_read(0, current_buffer_size, ev3).get();
     
             // wait for calculation result to arrive
-            boost::shared_ptr<std::vector<char>> readdata = ev3.get_data().get();
+            boost::shared_ptr<std::vector<char>> readdata = ev4.get_data().get();
     
             // copy calculation result to output buffer
-            for(size_t i = 0; i < 3 * next_workload->num_pixels; i++)
-            {
-                next_workload->pixeldata[i] = ((unsigned char*)readdata->data())[i];
-            }
+            next_workload->pixeldata = readdata;
             
             // return calculated workload to work manager workload
-            workqueue->deliver(next_workload);
+            deliver_done_work(next_workload);
 
             // count number of workloads
             num_work++;
@@ -142,25 +232,23 @@ mandelbrotworker::worker_main(
 
 void
 mandelbrotworker::worker_starter(
-           boost::shared_ptr<work_queue<boost::shared_ptr<workload>>> workqueue,
-           hpx::opencl::device device,
            size_t num_workers,
-           boost::shared_ptr<hpx::lcos::local::event> worker_initialized,
-           unsigned int id)
+           size_t workpacket_size_hint_x,
+           size_t workpacket_size_hint_y)
 {
+
+
     try{
 
-        bool verbose = false;
-
         std::string device_vendor = device.device_info_to_string(
-                                  device.get_device_info(CL_DEVICE_VENDOR));
+                                    device.get_device_info(CL_DEVICE_VENDOR));
         std::string device_name = device.device_info_to_string(
                                   device.get_device_info(CL_DEVICE_NAME));
         std::string device_version = device.device_info_to_string(
-                                  device.get_device_info(CL_DEVICE_VERSION));
+                                     device.get_device_info(CL_DEVICE_VERSION));
 
         // print device name
-        hpx::cout << "#" << id << ": "
+        hpx::cerr << "#" << id << ": "
                   << device_vendor << ": "
                   << device_name << " ("
                   << device_version << ")"
@@ -168,14 +256,16 @@ mandelbrotworker::worker_starter(
     
         // build opencl program
         hpx::opencl::program mandelbrot_program =
-                          device.create_program_with_source(mandelbrot_kernels);
-        hpx::cout << "#" << id << ": " << "compiling" << hpx::endl;
+                     device.create_program_with_source(mandelbrot_kernels);
+        if(verbose)
+            hpx::cout << "#" << id << ": " << "compiling" << hpx::endl;
         mandelbrot_program.build();
-        if(verbose) hpx::cout << "#" << id << ": " << "compiling done." << hpx::endl;
+        if(verbose)
+            hpx::cout << "#" << id << ": " << "compiling done." << hpx::endl;
     
         
         // start workers
-        std::vector<hpx::lcos::shared_future<size_t>> worker_futures;
+        std::vector<hpx::lcos::future<size_t>> worker_futures;
         for(size_t i = 0; i < num_workers; i++)
         {
          
@@ -183,16 +273,26 @@ mandelbrotworker::worker_starter(
             hpx::opencl::kernel kernel = 
                        mandelbrot_program.create_kernel("mandelbrot_alias_8x8");
 
+            // create precalc kernel
+            hpx::opencl::kernel precalc_kernel = 
+                       mandelbrot_program.create_kernel("precompute_mandelbrot");
+
             // start worker
-            hpx::lcos::shared_future<size_t> worker_future = 
-                        hpx::async(&worker_main, workqueue, device, kernel, id);
+            hpx::lcos::future<size_t> worker_future = 
+                                      hpx::async(&mandelbrotworker::worker_main,
+                                                 this,
+                                                 precalc_kernel,
+                                                 kernel,
+                                                 workpacket_size_hint_x,
+                                                 workpacket_size_hint_y);
 
             // add worker to workerlist
-            worker_futures.push_back(worker_future);
+            worker_futures.push_back(std::move(worker_future));
 
         }
 
-        hpx::cout << "#" << id << ": " << "workers started!" << hpx::endl;
+        if(verbose)
+            hpx::cout << "#" << id << ": " << "workers started!" << hpx::endl;
 
         // trigger event to start main function.
         // needed for accurate time measurement
@@ -204,12 +304,6 @@ mandelbrotworker::worker_starter(
         {
             // finish worker and get number of computed work packets
             size_t num_work_single = worker_futures[i].get();
-
-            // display work packet count
-            /*hpx::cout << "#" << id << ": " << "worker " << i 
-                      << ": " << num_work_single << " work packets"
-                      << hpx::endl;
-            */
 
             // count total work packets
             num_work += num_work_single;

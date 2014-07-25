@@ -6,15 +6,23 @@
 #ifndef MANDELBROT_PNG_WRITER_H_
 #define MANDELBROT_PNG_WRITER_H_
 
+
 #include <cstdlib>
+#include <vector>
+#include <boost/shared_ptr.hpp>
+#include <boost/shared_array.hpp>
 
-// creates an image with size x,y
-unsigned long png_create(size_t x, size_t y);
-void test();
+// writes data to png file
+void save_png(boost::shared_ptr< std::vector<char> > data, size_t width, size_t height, const char* filename);
 
-// sets a row of the image. data needs to be an array of size 3*x
-void png_set_row(unsigned long id, size_t y, unsigned char * data);
-void png_save_and_close(unsigned long id, const char* filename);
+boost::shared_array<char> create_png(boost::shared_ptr< std::vector<char> > data, size_t width, size_t height, size_t * size);
+
+void png_write_to_file(boost::shared_array<char> png, size_t png_size, const char* filename);
+
+
+
+
+
 
 #endif
 
