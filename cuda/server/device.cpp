@@ -16,14 +16,20 @@
 #include <thrust/version.h>
 #include <boost/make_shared.hpp>
 #include <string>
+#include <sstream>
 #include <iostream>
 #include <vector>
-#include  "../fwd_declarations.hpp"
 
 #include "../cuda/kernel.cuh"
-#include "../kernel.hpp"
+
 #include "device.hpp"
-#include "../server/kernel.hpp"
+#include "kernel.hpp"
+#include "buffer.hpp"
+#include "program.hpp"
+
+#include "../kernel.hpp"
+#include "../buffer.hpp"
+#include "../program.hpp"
 
 using namespace hpx::cuda::server;
         
@@ -47,12 +53,15 @@ device::device(int device_id)
 }
 
 device::~device()
+{}
+
+void device::free()
 {
     for (uint64_t i=0;i<device_ptrs.size();i++)
     {
         cuMemFree(device_ptrs[i].device_ptr);
     }
-	cuCtxDetach(cu_context);
+    cuCtxDetach(cu_context);
 }
 
 int device::get_device_count()
@@ -98,11 +107,10 @@ void device::get_cuda_info()
        	}
 
         std::cout<<i<<": "<< props.name<<": "<<props.major<<"."<<props.minor<<std::endl;
-        std::cout<< "   Global memory:   "<<props.totalGlobalMem / mb<<"mb"<<std::endl;
+        std::cout<<"   Global memory:   "<<props.totalGlobalMem / mb<<"mb"<<std::endl;
         std::cout<<"   Shared memory:   " <<props.sharedMemPerBlock / kb<<"kb"<<std::endl;
         std::cout<<"   Constant memory: " <<props.totalConstMem / kb<<"kb"<<std::endl;
         std::cout<<"   Block registers: " <<props.regsPerBlock<<std::endl<<std::endl;
-
         std::cout<<"   Warp size:         "<<props.warpSize<<std::endl;
         std::cout<<"   Threads per block: "<<props.maxThreadsPerBlock<<std::endl;
         std::cout<<"   Max block dimensions: [ " << props.maxThreadsDim[0]<<", "<<props.maxThreadsDim[1]<<", "<<props.maxThreadsDim[2]<<" ]"<<std::endl;
@@ -130,8 +138,6 @@ void device::get_cuda_info()
     void device::do_wait(boost::shared_ptr<hpx::lcos::local::promise<int> > p)
     {
         p->set_value(0);   
-       	float x = pi(10,10);
-        std::cout << x << std::endl;
     }
 
    	hpx::lcos::future<int> device::wait()
@@ -147,19 +153,14 @@ void device::get_cuda_info()
         return p->get_future();
     }   
 
-    float device::calculate_pi(int nthreads,int nblocks)
-    {
-        return pi(nthreads,nblocks);
-    }
-
     void device::create_device_ptr(size_t const byte_count)
     {
         Device_ptr temp;
-        Host_ptr<int> temp2;
         cuMemAlloc(&temp.device_ptr, byte_count);
-        temp2.host_ptr = (int*)malloc(byte_count);
         temp.byte_count = byte_count;
         device_ptrs.push_back(temp);
+        Host_ptr<int> temp2;
+        temp2.host_ptr = (int*)malloc(byte_count);
         host_ptrs.push_back(temp2);
     }
 
@@ -175,18 +176,44 @@ void device::get_cuda_info()
 
     void device::launch_kernel(hpx::cuda::kernel cu_kernel)
     {
-        hpx::cuda::server::kernel::Dim3 block = cu_kernel.get_block();
-        hpx::cuda::server::kernel::Dim3 grid = cu_kernel.get_grid();
+        hpx::cuda::server::kernel::Dim3 block = cu_kernel.get_block_sync();
+        hpx::cuda::server::kernel::Dim3 grid = cu_kernel.get_grid_sync();
 
         void *args[1] = {&(device_ptrs[0].device_ptr)};
 
         CUfunction cu_function;
         CUmodule cu_module;
-                    
-        cuModuleLoad(&cu_module, cu_kernel.get_module().c_str());
-        cuModuleGetFunction(&cu_function, cu_module, cu_kernel.get_function().c_str());
-		CUresult error = cuLaunchKernel(cu_function, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0, 0, args, 0);
-        if (error != CUDA_SUCCESS)
-            std::cout << "error launching kernel" << std::endl;
+        CUresult cu_error;
+        
+        cu_error = cuModuleLoad(&cu_module, (char*)cu_kernel.get_module_sync().c_str());
+        std::cout << "loading module returns " << (unsigned int)cu_error << std::endl;
+
+        cu_error = cuModuleGetFunction(&cu_function, cu_module, (char*)cu_kernel.get_function_sync().c_str());
+        std::cout << "loading function returns " << (unsigned int)cu_error << std::endl;
+
+        cu_error = cuLaunchKernel(cu_function, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0, 0, args, 0);
+        std::cout << "launching kernel returns " << (unsigned int)cu_error << std::endl;
+    }
+
+    hpx::cuda::program device::create_program_with_source(std::string source)
+    {
+        typedef hpx::cuda::server::program program_type;
+
+        hpx::cuda::program cu_program(
+            hpx::components::new_<program_type>(hpx::find_here()));
+        cu_program.set_source_sync(source);
+        return cu_program;
+    }
+
+    hpx::cuda::buffer device::create_buffer(size_t size)
+    {
+        typedef hpx::cuda::server::buffer buffer_type;
+        
+        hpx::cuda::buffer cu_buffer(
+            hpx::components::new_<buffer_type>(hpx::find_here()));
+
+        cu_buffer.set_size_sync(size);
+
+        return cu_buffer;
     }
         

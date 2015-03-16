@@ -1,4 +1,3 @@
-
 // Copyright (c)		2013 Damond Howard
 // 
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
@@ -12,7 +11,7 @@
 #include <hpx/runtime/components/server/locking_hook.hpp>
 #include <hpx/runtime/actions/component_action.hpp>
 #include <hpx/runtime/get_ptr.hpp>
-#include <hpx/include/util.hpp>
+#include <hpx/util/serialize_buffer.hpp>
 
 #include <cuda.h>
 
@@ -34,34 +33,26 @@
  			{
  			 	private:
  			 	size_t arg_buffer_size; 
+                int parent_device_num;
  			 	public:
- 			 	buffer()
- 			 	{
- 			 		this->arg_buffer_size = (size_t)0;
- 			 	}
- 			 	buffer(size_t size)
- 			 	{
- 			 		this->arg_buffer_size = size;
- 			 	} 	
- 			 	size_t size()
- 			 	{
- 			 		return this->arg_buffer_size;
- 			 	}
- 			 	~buffer()
- 			 	{
- 			 	}
+ 			 	buffer(); 
 
- 			 	void push_back(void *arg)
- 			 	{
- 			 	}
+ 			 	buffer(size_t size);
+ 			
+ 			 	size_t size();
 
- 			 	void load_args()
- 			 	{
- 			 	}
- 			 	//HPX action definitions
- 			 	HPX_DEFINE_COMPONENT_ACTION(buffer,size);
- 			 	HPX_DEFINE_COMPONENT_ACTION(buffer,push_back);
- 			 	HPX_DEFINE_COMPONENT_ACTION(buffer,load_args);
+ 			 	void set_size(size_t size);
+ 			 
+ 			 	~buffer();
+ 			 	
+ 			 	void enqueue_read(size_t offset, size_t size) const;
+				
+ 			 	void enqueue_write(size_t offset, hpx::util::serialize_buffer<char> data);
+ 			 	
+ 			 	HPX_DEFINE_COMPONENT_ACTION(buffer, size);
+ 			 	HPX_DEFINE_COMPONENT_ACTION(buffer, set_size);
+ 			 	HPX_DEFINE_COMPONENT_ACTION(buffer, enqueue_read);
+ 			 	HPX_DEFINE_COMPONENT_ACTION(buffer, enqueue_write);
  			};
  		}
  	}
@@ -71,11 +62,13 @@
  	hpx::cuda::server::buffer::size_action,
  	buffer_size_action);
  HPX_REGISTER_ACTION_DECLARATION(
- 	hpx::cuda::server::buffer::push_back_action,
- 	buffer_push_back_action);
+ 	hpx::cuda::server::buffer::set_size_action,
+ 	buffer_set_size_action);
  HPX_REGISTER_ACTION_DECLARATION(
- 	hpx::cuda::server::buffer::load_args_action,
- 	buffer_load_args_action);
+ 	hpx::cuda::server::buffer::enqueue_read_action, 
+ 	buffer_enqueue_read_action);
+ HPX_REGISTER_ACTION_DECLARATION(
+ 	hpx::cuda::server::buffer::enqueue_write_action,
+ 	buffer_enqueue_write_action);
 
- //HPX action declarations
  #endif //BUFFER_2_HPP

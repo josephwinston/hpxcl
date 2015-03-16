@@ -7,15 +7,17 @@ namespace hpx
 	namespace cuda
 	{
 		class device;
-		//class buffer;
+		class buffer;
 		class kernel;
-		//class event;
+		class program;
+		class event;
 		namespace server
 		{
 			class device;
-			//class buffer;
+			class buffer;
 			class kernel;
-			//class event;
+			class program;
+			class event;
 		}
 	}
 }

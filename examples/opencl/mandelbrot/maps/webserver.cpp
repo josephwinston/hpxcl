@@ -11,8 +11,7 @@
 
 #include <sstream>
 
-#include "mandelbrot_ico_data.hpp"
-#include "mandelbrot_html_data.hpp"
+#include "resources/resources.hpp"
 
 using namespace hpx::opencl::examples::mandelbrot;
 using boost::asio::ip::tcp;
@@ -176,8 +175,8 @@ webserver::read_filename_from_request(std::string line)
 
 struct send_data_data
 {
-    std::string header = "";
-    std::string footer = "";
+    std::string header;
+    std::string footer;
     boost::shared_ptr<std::vector<char>> data;
     std::vector<boost::asio::const_buffer> buffers;
 };
@@ -339,7 +338,7 @@ webserver::process_request(boost::shared_ptr<tcp::socket> socket,
     if(filename == "/favicon.ico")
     {
         send_data(socket, "image/x-icon",
-                  (const char*)mandelbrot_ico, mandelbrot_ico_len);
+                  mandelbrot_ico, mandelbrot_ico_len);
         return;
     }
 
